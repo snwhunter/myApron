@@ -65,11 +65,10 @@ async function uploadFile(file:File){
 }
 
 export default function Home(){
- const[tab,setTab]=useState<Tab>("recipes"),[recipes,setRecipes]=useState<Recipe[]>([]),[list,setList]=useState<Item[]>([]);
+ const[tab,setTab]=useState<Tab>("recipes"),[recipes,setRecipes]=useState<Recipe[]>([]),[list,setList]=useState<Item[]>(()=>{if(typeof window==="undefined")return[];try{const s=localStorage.getItem("market-list-items");return s?JSON.parse(s):[]}catch{return[]}});
  const[front,setFront]=useState<File|null>(null),[back,setBack]=useState<File|null>(null),[frontUrl,setFrontUrl]=useState(""),[backUrl,setBackUrl]=useState("");
  const[title,setTitle]=useState(""),[servings,setServings]=useState(2),[ingredients,setIngredients]=useState<Ingredient[]>([]),[instructions,setInstructions]=useState(""),[busy,setBusy]=useState(""),[search,setSearch]=useState("");
  useEffect(()=>{fetch("/api/recipes").then(r=>r.json()).then(d=>setRecipes(d.recipes||[])).catch(()=>{})},[]);
- useEffect(()=>{const s=localStorage.getItem("market-list-items");if(s)setList(JSON.parse(s))},[]);
  useEffect(()=>localStorage.setItem("market-list-items",JSON.stringify(list)),[list]);
  const filtered=recipes.filter(r=>r.title.toLowerCase().includes(search.toLowerCase())||r.ingredients.some(i=>i.name.toLowerCase().includes(search.toLowerCase())));
  const grouped=useMemo(()=>aisles.map(aisle=>({aisle,items:list.filter(i=>i.aisle===aisle)})).filter(g=>g.items.length),[list]);
