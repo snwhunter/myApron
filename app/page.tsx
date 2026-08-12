@@ -6,8 +6,38 @@ type Recipe={id:number;title:string;servings:number;ingredients:Ingredient[];ins
 type Item=Ingredient&{id:string;checked:boolean;recipe?:string};
 type Tab="recipes"|"scan"|"list";
 const aisles=["Produce","Dairy & Eggs","Meat","Pantry","Bakery","Frozen","Household","Other"];
-const guess=(name:string)=>{const n=name.toLowerCase();if(/onion|garlic|pepper|tomato|potato|lemon|lime|herb|spinach|kale|carrot/.test(n))return"Produce";if(/milk|cheese|cream|butter|egg|yogurt/.test(n))return"Dairy & Eggs";if(/chicken|beef|pork|fish|salmon|shrimp|turkey/.test(n))return"Meat";if(/bread|bun|tortilla|roll/.test(n))return"Bakery";return"Pantry"};
-function parse(text:string):Ingredient[]{return text.split("\n").map(x=>x.replace(/^[•·\-*]\s*/,"").trim()).filter(x=>x.length>2&&!/^(ingredients|you.?ll need|instructions|cook|prep)/i.test(x)).slice(0,24).map(line=>{const m=line.match(/^([\d¼½¾⅓⅔⅛⅜⅝⅞/.\s]+(?:cups?|tbsp|tsp|oz|lbs?|cloves?|pieces?|bunch|head|can|package)?\s+)?(.+)$/i);const quantity=m?.[1]?.trim()||"";const name=(m?.[2]||line).trim();return{quantity,name,aisle:guess(name)}})}
+const guess=(name:string)=>{const n=name.toLowerCase();if(/onion|garlic|pepper|tomato|potato|lemon|lime|herb|spinach|kale|carrot|zucchini|scallion|parsley|cilantro/.test(n))return"Produce";if(/milk|cheese|cream|butter|egg|yogurt|mozzarella|parmesan/.test(n))return"Dairy & Eggs";if(/chicken|beef|pork|fish|salmon|shrimp|turkey/.test(n))return"Meat";if(/bread|bun|tortilla|roll/.test(n))return"Bakery";return"Pantry"};
+const clean=(s:string)=>s.replace(/[|]/g," ").replace(/^[•·●○\-*—–]+\s*/,"").replace(/\s+/g," ").trim();
+const noise=(s:string)=>/blue apron|cooking for|servings?|minute recipe|nutrition|getting started|chef.?s note|limited.time|breakfast|scan the qr|instructions?/i.test(s);
+function parse(text:string):Ingredient[]{
+ const qty=/^((?:\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞])(?:\s*(?:-|–|to)\s*(?:\d+\/\d+|\d+(?:\.\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞]))?\s*(?:cups?|tbsp|tablespoons?|tsp|teaspoons?|oz|ounces?|lbs?|pounds?|cloves?|pieces?|bunch(?:es)?|heads?|cans?|packages?|packets?|slices?)?)[\s:,-]+(.+)$/i;
+ return text.split("\n").map(clean).filter(x=>x.length>2&&!noise(x)).map(line=>{const m=line.match(qty);if(!m)return null;const name=clean(m[2]).replace(/[•·]+$/g,"");if(name.length<2||/^\d+$/.test(name))return null;return{quantity:clean(m[1]),name,aisle:guess(name)}}).filter((x):x is Ingredient=>!!x).slice(0,24);
+}
+function extractTitle(text:string){
+ const lines=text.split("\n").map(clean).filter(x=>x.length>=4&&x.length<=70&&!noise(x)&&!/^\d/.test(x));
+ const likely=lines.filter(x=>!/(www\.|\.com|ingredients?|pantry|step \d|cook time|prep time)/i.test(x));
+ return likely.sort((a,b)=>b.length-a.length)[0]||"New recipe";
+}
+async function imageCanvas(file:File,crop?:{x:number;y:number;w:number;h:number},maxDimension=1800){
+ const url=URL.createObjectURL(file);
+ try{
+  const img=await new Promise<HTMLImageElement>((resolve,reject)=>{const el=new Image();el.onload=()=>resolve(el);el.onerror=()=>reject(new Error("Image could not be opened"));el.src=url});
+  const sx=(crop?.x||0)*img.naturalWidth,sy=(crop?.y||0)*img.naturalHeight,sw=(crop?.w||1)*img.naturalWidth,sh=(crop?.h||1)*img.naturalHeight;
+  const scale=Math.min(1,maxDimension/Math.max(sw,sh));
+  const canvas=document.createElement("canvas");canvas.width=Math.max(1,Math.round(sw*scale));canvas.height=Math.max(1,Math.round(sh*scale));
+  const ctx=canvas.getContext("2d");if(!ctx)throw new Error("Image processing unavailable");
+  ctx.drawImage(img,sx,sy,sw,sh,0,0,canvas.width,canvas.height);return canvas;
+ }finally{URL.revokeObjectURL(url)}
+}
+async function jpegFile(file:File){
+ const canvas=await imageCanvas(file,undefined,1800);
+ const blob=await new Promise<Blob>((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error("Image compression failed")),"image/jpeg",0.8));
+ return new File([blob],file.name.replace(/\.[^.]+$/,"")+".jpg",{type:"image/jpeg",lastModified:Date.now()});
+}
+async function cropBlob(file:File,crop:{x:number;y:number;w:number;h:number}){
+ const canvas=await imageCanvas(file,crop,1800);
+ return await new Promise<Blob>((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error("Image crop failed")),"image/jpeg",0.9));
+}
 
 export default function Home(){
  const[tab,setTab]=useState<Tab>("recipes"),[recipes,setRecipes]=useState<Recipe[]>([]),[list,setList]=useState<Item[]>([]);
@@ -18,10 +48,38 @@ export default function Home(){
  useEffect(()=>localStorage.setItem("market-list-items",JSON.stringify(list)),[list]);
  const filtered=recipes.filter(r=>r.title.toLowerCase().includes(search.toLowerCase())||r.ingredients.some(i=>i.name.toLowerCase().includes(search.toLowerCase())));
  const grouped=useMemo(()=>aisles.map(aisle=>({aisle,items:list.filter(i=>i.aisle===aisle)})).filter(g=>g.items.length),[list]);
- function choose(e:ChangeEvent<HTMLInputElement>,side:"front"|"back"){const f=e.target.files?.[0];if(!f)return;const u=URL.createObjectURL(f);if(side==="front"){setFront(f);setFrontUrl(u)}else{setBack(f);setBackUrl(u)}}
- async function scan(){if(!front&&!back)return;setBusy("Reading your card…");try{const{createWorker}=await import("tesseract.js");const w=await createWorker("eng");let a="",b="";if(front){setBusy("Reading the front…");a=(await w.recognize(front)).data.text}if(back){setBusy("Reading the back…");b=(await w.recognize(back)).data.text}await w.terminate();const lines=a.split("\n").map(x=>x.trim()).filter(Boolean);setTitle(lines.find(x=>x.length>5&&x.length<80)||"New recipe");setIngredients(parse(a));setInstructions(b.trim());setBusy("")}catch{setBusy("Couldn’t read it. You can still enter it below.")}}
+ async function choose(e:ChangeEvent<HTMLInputElement>,side:"front"|"back"){
+  const raw=e.target.files?.[0];if(!raw)return;
+  try{
+   setBusy(`Optimizing ${side} photo…`);const f=await jpegFile(raw);const u=URL.createObjectURL(f);
+   if(side==="front"){if(frontUrl)URL.revokeObjectURL(frontUrl);setFront(f);setFrontUrl(u)}else{if(backUrl)URL.revokeObjectURL(backUrl);setBack(f);setBackUrl(u)}
+  }catch{setBusy("Couldn’t prepare that photo. Please retake it.");return}finally{setTimeout(()=>setBusy(x=>x.startsWith("Couldn’t")?x:""),0)}
+ }
+ async function scan(){
+  if(!front&&!back)return;setBusy("Reading your card…");
+  try{
+   const{createWorker,PSM}=await import("tesseract.js");const w=await createWorker("eng");await w.setParameters({tessedit_pageseg_mode:PSM.SINGLE_BLOCK,preserve_interword_spaces:"1"});
+   let titleText="",ingredientText="",instructionText="";
+   if(front){
+    setBusy("Reading the recipe title…");titleText=(await w.recognize(await cropBlob(front,{x:0,y:0,w:.56,h:.34}))).data.text;
+    setBusy("Reading the ingredients…");ingredientText=(await w.recognize(await cropBlob(front,{x:0,y:.12,w:.5,h:.76}))).data.text;
+   }
+   if(back){setBusy("Reading the directions…");instructionText=(await w.recognize(await cropBlob(back,{x:0,y:0,w:1,h:.82}))).data.text}
+   await w.terminate();
+   if(front){setTitle(extractTitle(titleText));const parsed=parse(ingredientText);setIngredients(parsed.length?parsed:parse(titleText+"\n"+ingredientText))}
+   setInstructions(instructionText.trim());setBusy("");
+  }catch{setBusy("Couldn’t read it. You can still enter it below.")}
+ }
  function update(i:number,k:keyof Ingredient,v:string){setIngredients(x=>x.map((a,n)=>n===i?{...a,[k]:v}:a))}
- async function save(){if(!title.trim())return;setBusy("Saving recipe…");const f=new FormData();f.set("title",title);f.set("servings",String(servings));f.set("ingredients",JSON.stringify(ingredients.filter(i=>i.name.trim())));f.set("instructions",instructions);if(front)f.set("front",front);if(back)f.set("back",back);const r=await fetch("/api/recipes",{method:"POST",body:f});const d=await r.json();if(!r.ok){setBusy(d.error||"Couldn’t save");return}setRecipes(x=>[d.recipe,...x]);setBusy("");setTab("recipes");setFront(null);setBack(null);setFrontUrl("");setBackUrl("");setTitle("");setIngredients([]);setInstructions("")}
+ async function save(){
+  if(!title.trim())return;setBusy("Saving recipe…");
+  try{
+   const f=new FormData();f.set("title",title);f.set("servings",String(servings));f.set("ingredients",JSON.stringify(ingredients.filter(i=>i.name.trim())));f.set("instructions",instructions);if(front)f.set("front",front);if(back)f.set("back",back);
+   const r=await fetch("/api/recipes",{method:"POST",body:f});let d:{error?:string;recipe?:Recipe}={};try{d=await r.json()}catch{}
+   if(!r.ok||!d.recipe){setBusy(r.status===413?"Photos are still too large. Retake them a little farther away.":d.error||"Couldn’t save recipe");return}
+   setRecipes(x=>[d.recipe!,...x]);setBusy("");setTab("recipes");setFront(null);setBack(null);if(frontUrl)URL.revokeObjectURL(frontUrl);if(backUrl)URL.revokeObjectURL(backUrl);setFrontUrl("");setBackUrl("");setTitle("");setIngredients([]);setInstructions("");
+  }catch{setBusy("Save failed. Check your connection and try again.")}
+ }
  function add(r:Recipe){setList(x=>[...x,...r.ingredients.map((i,n)=>({...i,id:`${r.id}-${n}-${Date.now()}`,checked:false,recipe:r.title}))]);setTab("list")}
  const toggle=(id:string)=>setList(x=>x.map(i=>i.id===id?{...i,checked:!i.checked}:i));
  return <main className="shell"><section className="app">
