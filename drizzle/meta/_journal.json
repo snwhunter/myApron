@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1786567060930,
+      "tag": "0000_greedy_shadow_king",
+      "breakpoints": true
+    }
+  ]
+}
