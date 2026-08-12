@@ -5,38 +5,63 @@ type Ingredient={quantity:string;name:string;aisle:string};
 type Recipe={id:number;title:string;servings:number;ingredients:Ingredient[];instructions:string;frontImageKey?:string};
 type Item=Ingredient&{id:string;checked:boolean;recipe?:string};
 type Tab="recipes"|"scan"|"list";
+type Crop={x:number;y:number;w:number;h:number};
 const aisles=["Produce","Dairy & Eggs","Meat","Pantry","Bakery","Frozen","Household","Other"];
-const guess=(name:string)=>{const n=name.toLowerCase();if(/onion|garlic|pepper|tomato|potato|lemon|lime|herb|spinach|kale|carrot|zucchini|scallion|parsley|cilantro/.test(n))return"Produce";if(/milk|cheese|cream|butter|egg|yogurt|mozzarella|parmesan/.test(n))return"Dairy & Eggs";if(/chicken|beef|pork|fish|salmon|shrimp|turkey/.test(n))return"Meat";if(/bread|bun|tortilla|roll/.test(n))return"Bakery";return"Pantry"};
+const guess=(name:string)=>{const n=name.toLowerCase();if(/onion|garlic|pepper|tomato|potato|lemon|lime|herb|spinach|kale|carrot|zucchini|scallion|parsley|cilantro/.test(n))return"Produce";if(/milk|cheese|cream|butter|egg|yogurt|mozzarella|parmesan/.test(n))return"Dairy & Eggs";if(/chicken|beef|pork|fish|salmon|shrimp|turkey|sausage/.test(n))return"Meat";if(/bread|bun|tortilla|roll/.test(n))return"Bakery";return"Pantry"};
 const clean=(s:string)=>s.replace(/[|]/g," ").replace(/^[•·●○\-*—–]+\s*/,"").replace(/\s+/g," ").trim();
-const noise=(s:string)=>/blue apron|cooking for|servings?|minute recipe|nutrition|getting started|chef.?s note|limited.time|breakfast|scan the qr|instructions?/i.test(s);
+const noise=(s:string)=>/blue apron|cooking for|servings?|minute recipe|nutrition|getting started|chef.?s note|limited.time|breakfast|scan the qr|instructions?|from your pantry/i.test(s);
+const normalizeOcr=(s:string)=>clean(s).replace(/\bO(?=\s*(?:oz|cup|tbsp|tsp|lb)\b)/gi,"0").replace(/^(\d)([A-Za-z])/,'$1 $2');
 function parse(text:string):Ingredient[]{
- const qty=/^((?:\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞])(?:\s*(?:-|–|to)\s*(?:\d+\/\d+|\d+(?:\.\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞]))?\s*(?:cups?|tbsp|tablespoons?|tsp|teaspoons?|oz|ounces?|lbs?|pounds?|cloves?|pieces?|bunch(?:es)?|heads?|cans?|packages?|packets?|slices?)?)[\s:,-]+(.+)$/i;
- return text.split("\n").map(clean).filter(x=>x.length>2&&!noise(x)).map(line=>{const m=line.match(qty);if(!m)return null;const name=clean(m[2]).replace(/[•·]+$/g,"");if(name.length<2||/^\d+$/.test(name))return null;return{quantity:clean(m[1]),name,aisle:guess(name)}}).filter((x):x is Ingredient=>!!x).slice(0,24);
+ const unit="cups?|tbsp|tablespoons?|tsp|teaspoons?|oz|ounces?|lbs?|pounds?|cloves?|pieces?|bunch(?:es)?|heads?|cans?|packages?|packets?|slices?";
+ const number="(?:\\d+\\s+\\d+\\/\\d+|\\d+\\/\\d+|\\d+(?:\\.\\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞])(?:\\s*(?:-|–|to)\\s*(?:\\d+\\/\\d+|\\d+(?:\\.\\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞]))?";
+ const full=new RegExp(`^(${number}\\s*(?:${unit})?)[\\s:,-]+(.+)$`,"i");
+ const qtyOnly=new RegExp(`^(${number}\\s*(?:${unit})?)$`,"i");
+ const lines=text.split("\n").map(normalizeOcr).filter(x=>x.length>1&&!noise(x));
+ const out:Ingredient[]=[];let pending="";
+ for(const line of lines){
+  const m=line.match(full);
+  if(m){const name=clean(m[2]).replace(/[•·]+$/g,"");if(name.length>1&&!/^\d+$/.test(name))out.push({quantity:clean(m[1]),name,aisle:guess(name)});pending="";continue}
+  const q=line.match(qtyOnly);if(q){pending=clean(q[1]);continue}
+  if(pending&&line.length>1&&!/^\d+$/.test(line)){out.push({quantity:pending,name:line,aisle:guess(line)});pending=""}
+ }
+ return out.slice(0,24);
 }
 function extractTitle(text:string){
  const lines=text.split("\n").map(clean).filter(x=>x.length>=4&&x.length<=70&&!noise(x)&&!/^\d/.test(x));
- const likely=lines.filter(x=>!/(www\.|\.com|ingredients?|pantry|step \d|cook time|prep time)/i.test(x));
- return likely.sort((a,b)=>b.length-a.length)[0]||"New recipe";
+ const likely=lines.filter(x=>!/(www\.|\.com|ingredients?|pantry|step \d|cook time|prep time|recipe)/i.test(x));
+ if(!likely.length)return"New recipe";
+ const scored=likely.map((line,index)=>({line,score:(index<4?5-index:0)+(line.split(/\s+/).length>=3?4:0)+(line.length>=12&&line.length<=45?3:0)-(/[©®]|^[^A-Za-z]+/.test(line)?5:0)}));
+ return scored.sort((a,b)=>b.score-a.score)[0].line;
 }
-async function imageCanvas(file:File,crop?:{x:number;y:number;w:number;h:number},maxDimension=1800){
+function cleanDirections(text:string){
+ return text.split("\n").map(clean).filter(x=>x.length>1&&!/blue apron|cooking for|scan the qr|continued steps|breakfast/i.test(x)).join("\n").trim();
+}
+async function loadImage(file:File){
  const url=URL.createObjectURL(file);
- try{
-  const img=await new Promise<HTMLImageElement>((resolve,reject)=>{const el=new Image();el.onload=()=>resolve(el);el.onerror=()=>reject(new Error("Image could not be opened"));el.src=url});
-  const sx=(crop?.x||0)*img.naturalWidth,sy=(crop?.y||0)*img.naturalHeight,sw=(crop?.w||1)*img.naturalWidth,sh=(crop?.h||1)*img.naturalHeight;
-  const scale=Math.min(1,maxDimension/Math.max(sw,sh));
-  const canvas=document.createElement("canvas");canvas.width=Math.max(1,Math.round(sw*scale));canvas.height=Math.max(1,Math.round(sh*scale));
-  const ctx=canvas.getContext("2d");if(!ctx)throw new Error("Image processing unavailable");
-  ctx.drawImage(img,sx,sy,sw,sh,0,0,canvas.width,canvas.height);return canvas;
- }finally{URL.revokeObjectURL(url)}
+ try{return await new Promise<HTMLImageElement>((resolve,reject)=>{const el=new Image();el.onload=()=>resolve(el);el.onerror=()=>reject(new Error("Image could not be opened"));el.src=url})}
+ finally{URL.revokeObjectURL(url)}
 }
-async function jpegFile(file:File){
- const canvas=await imageCanvas(file,undefined,1800);
- const blob=await new Promise<Blob>((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error("Image compression failed")),"image/jpeg",0.8));
+async function imageCanvas(file:File,crop?:Crop,maxDimension=1800,allowUpscale=false){
+ const img=await loadImage(file);
+ const sx=(crop?.x||0)*img.naturalWidth,sy=(crop?.y||0)*img.naturalHeight,sw=(crop?.w||1)*img.naturalWidth,sh=(crop?.h||1)*img.naturalHeight;
+ const rawScale=maxDimension/Math.max(sw,sh);const scale=allowUpscale?Math.min(2.4,rawScale):Math.min(1,rawScale);
+ const canvas=document.createElement("canvas");canvas.width=Math.max(1,Math.round(sw*scale));canvas.height=Math.max(1,Math.round(sh*scale));
+ const ctx=canvas.getContext("2d");if(!ctx)throw new Error("Image processing unavailable");
+ ctx.drawImage(img,sx,sy,sw,sh,0,0,canvas.width,canvas.height);return canvas;
+}
+function improveForOcr(canvas:HTMLCanvasElement){
+ const ctx=canvas.getContext("2d");if(!ctx)return canvas;const data=ctx.getImageData(0,0,canvas.width,canvas.height);const p=data.data;
+ for(let i=0;i<p.length;i+=4){const g=.299*p[i]+.587*p[i+1]+.114*p[i+2];const v=Math.max(0,Math.min(255,(g-128)*1.45+150));p[i]=p[i+1]=p[i+2]=v}
+ ctx.putImageData(data,0,0);return canvas;
+}
+async function ocrBlob(file:File,crop:Crop){
+ const canvas=improveForOcr(await imageCanvas(file,crop,2600,true));
+ return await new Promise<Blob>((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error("OCR crop failed")),"image/jpeg",0.94));
+}
+async function uploadFile(file:File){
+ const canvas=await imageCanvas(file,undefined,1200,false);
+ const blob=await new Promise<Blob>((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error("Image compression failed")),"image/jpeg",0.68));
  return new File([blob],file.name.replace(/\.[^.]+$/,"")+".jpg",{type:"image/jpeg",lastModified:Date.now()});
-}
-async function cropBlob(file:File,crop:{x:number;y:number;w:number;h:number}){
- const canvas=await imageCanvas(file,crop,1800);
- return await new Promise<Blob>((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error("Image crop failed")),"image/jpeg",0.9));
 }
 
 export default function Home(){
@@ -49,34 +74,45 @@ export default function Home(){
  const filtered=recipes.filter(r=>r.title.toLowerCase().includes(search.toLowerCase())||r.ingredients.some(i=>i.name.toLowerCase().includes(search.toLowerCase())));
  const grouped=useMemo(()=>aisles.map(aisle=>({aisle,items:list.filter(i=>i.aisle===aisle)})).filter(g=>g.items.length),[list]);
  async function choose(e:ChangeEvent<HTMLInputElement>,side:"front"|"back"){
-  const raw=e.target.files?.[0];if(!raw)return;
+  const f=e.target.files?.[0];if(!f)return;
   try{
-   setBusy(`Optimizing ${side} photo…`);const f=await jpegFile(raw);const u=URL.createObjectURL(f);
+   setBusy(`Preparing ${side} photo…`);await loadImage(f);const u=URL.createObjectURL(f);
    if(side==="front"){if(frontUrl)URL.revokeObjectURL(frontUrl);setFront(f);setFrontUrl(u)}else{if(backUrl)URL.revokeObjectURL(backUrl);setBack(f);setBackUrl(u)}
-  }catch{setBusy("Couldn’t prepare that photo. Please retake it.");return}finally{setTimeout(()=>setBusy(x=>x.startsWith("Couldn’t")?x:""),0)}
+   setBusy("");
+  }catch{setBusy("Couldn’t prepare that photo. Please retake it.")}
  }
  async function scan(){
   if(!front&&!back)return;setBusy("Reading your card…");
   try{
-   const{createWorker,PSM}=await import("tesseract.js");const w=await createWorker("eng");await w.setParameters({tessedit_pageseg_mode:PSM.SINGLE_BLOCK,preserve_interword_spaces:"1"});
-   let titleText="",ingredientText="",instructionText="";
+   const{createWorker,PSM}=await import("tesseract.js");const w=await createWorker("eng");
+   await w.setParameters({preserve_interword_spaces:"1"});
+   let titleText="",ingredientText="",leftDirections="",rightDirections="";
    if(front){
-    setBusy("Reading the recipe title…");titleText=(await w.recognize(await cropBlob(front,{x:0,y:0,w:.56,h:.34}))).data.text;
-    setBusy("Reading the ingredients…");ingredientText=(await w.recognize(await cropBlob(front,{x:0,y:.12,w:.5,h:.76}))).data.text;
+    setBusy("Reading the recipe title…");await w.setParameters({tessedit_pageseg_mode:PSM.SPARSE_TEXT});
+    titleText=(await w.recognize(await ocrBlob(front,{x:.02,y:.05,w:.46,h:.28}))).data.text;
+    setBusy("Reading the ingredients…");await w.setParameters({tessedit_pageseg_mode:PSM.SINGLE_COLUMN});
+    ingredientText=(await w.recognize(await ocrBlob(front,{x:.015,y:.28,w:.44,h:.52}))).data.text;
    }
-   if(back){setBusy("Reading the directions…");instructionText=(await w.recognize(await cropBlob(back,{x:0,y:0,w:1,h:.82}))).data.text}
+   if(back){
+    setBusy("Reading directions, left column…");await w.setParameters({tessedit_pageseg_mode:PSM.SINGLE_COLUMN});
+    leftDirections=(await w.recognize(await ocrBlob(back,{x:.01,y:.02,w:.49,h:.90}))).data.text;
+    setBusy("Reading directions, right column…");
+    rightDirections=(await w.recognize(await ocrBlob(back,{x:.50,y:.02,w:.49,h:.90}))).data.text;
+   }
    await w.terminate();
    if(front){setTitle(extractTitle(titleText));const parsed=parse(ingredientText);setIngredients(parsed.length?parsed:parse(titleText+"\n"+ingredientText))}
-   setInstructions(instructionText.trim());setBusy("");
+   if(back)setInstructions([cleanDirections(leftDirections),cleanDirections(rightDirections)].filter(Boolean).join("\n\n"));
+   setBusy("");
   }catch{setBusy("Couldn’t read it. You can still enter it below.")}
  }
  function update(i:number,k:keyof Ingredient,v:string){setIngredients(x=>x.map((a,n)=>n===i?{...a,[k]:v}:a))}
  async function save(){
   if(!title.trim())return;setBusy("Saving recipe…");
   try{
-   const f=new FormData();f.set("title",title);f.set("servings",String(servings));f.set("ingredients",JSON.stringify(ingredients.filter(i=>i.name.trim())));f.set("instructions",instructions);if(front)f.set("front",front);if(back)f.set("back",back);
+   const f=new FormData();f.set("title",title);f.set("servings",String(servings));f.set("ingredients",JSON.stringify(ingredients.filter(i=>i.name.trim())));f.set("instructions",instructions);
+   if(front){setBusy("Compressing photos…");f.set("front",await uploadFile(front))}if(back)f.set("back",await uploadFile(back));setBusy("Saving recipe…");
    const r=await fetch("/api/recipes",{method:"POST",body:f});let d:{error?:string;recipe?:Recipe}={};try{d=await r.json()}catch{}
-   if(!r.ok||!d.recipe){setBusy(r.status===413?"Photos are still too large. Retake them a little farther away.":d.error||"Couldn’t save recipe");return}
+   if(!r.ok||!d.recipe){setBusy(r.status===413?"Upload was too large. Try saving again; photos are compressed automatically.":d.error||"Couldn’t save recipe");return}
    setRecipes(x=>[d.recipe!,...x]);setBusy("");setTab("recipes");setFront(null);setBack(null);if(frontUrl)URL.revokeObjectURL(frontUrl);if(backUrl)URL.revokeObjectURL(backUrl);setFrontUrl("");setBackUrl("");setTitle("");setIngredients([]);setInstructions("");
   }catch{setBusy("Save failed. Check your connection and try again.")}
  }
