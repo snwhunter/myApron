@@ -47,7 +47,7 @@ function doGet(e) {
   try {
     authorize_(e && e.parameter ? e.parameter.key : null);
     const action = (e && e.parameter && e.parameter.action) || "recipes.list";
-    if (action === "health") return json_({ok:true, service:"myApron-google-backend", version:"1"});
+    if (action === "health") return json_({ok:true, service:"myApron-google-backend", version:"2"});
     if (action === "recipes.list") return json_({ok:true, recipes:listRows_("recipes").map(deserializeRecipe_)});
     if (action === "pantry.list") return json_({ok:true, pantry:listRows_("pantry")});
     if (action === "shopping.list") return json_({ok:true, shopping:listRows_("shopping")});
@@ -73,7 +73,7 @@ function doPost(e) {
     if (action === "plan.upsert") return json_({ok:true, plan:upsertGeneric_("plan", body.item || {})});
     if (action === "leftover.upsert") return json_({ok:true, leftover:upsertGeneric_("leftovers", body.item || {})});
     if (action === "purchase.upsert") return json_({ok:true, purchase:upsertPurchase_(body.purchase || {})});
-    if (action === "image.getUrl") return json_({ok:true, url:getFileUrl_(body.fileId)});
+    if (action === "image.get") return json_({ok:true, image:getFileData_(body.fileId)});
 
     return json_({ok:false, error:"Unknown action"});
   } catch (err) {
@@ -159,6 +159,17 @@ function saveReceipt_(purchaseId, image) {
   const name = purchaseId + ".jpg";
   removeFilesNamed_(receipts, name);
   return receipts.createFile(Utilities.newBlob(bytes, image.mimeType || "image/jpeg", name)).getId();
+}
+
+function getFileData_(fileId) {
+  if (!fileId) throw new Error("Missing fileId");
+  const file = DriveApp.getFileById(fileId);
+  const blob = file.getBlob();
+  return {
+    base64: Utilities.base64Encode(blob.getBytes()),
+    mimeType: blob.getContentType() || "image/jpeg",
+    name: file.getName()
+  };
 }
 
 function getFileUrl_(fileId) {
