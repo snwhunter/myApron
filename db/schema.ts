@@ -17,8 +17,10 @@ export const pantryItems = sqliteTable("pantry_items", {
   name: text("name").notNull(),
   quantity: text("quantity").notNull().default(""),
   aisle: text("aisle").notNull().default("Pantry"),
+  location: text("location").notNull().default("pantry"),
   barcode: text("barcode"),
   source: text("source").notNull().default("manual"),
+  sourceRef: text("source_ref"),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
