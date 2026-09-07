@@ -3,8 +3,10 @@ CREATE TABLE `pantry_items` (
   `name` text NOT NULL,
   `quantity` text DEFAULT '' NOT NULL,
   `aisle` text DEFAULT 'Pantry' NOT NULL,
+  `location` text DEFAULT 'pantry' NOT NULL,
   `barcode` text,
   `source` text DEFAULT 'manual' NOT NULL,
+  `source_ref` text,
   `updated_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
