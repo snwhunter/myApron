@@ -29,7 +29,7 @@ writeFileSync(
           binding: "DB",
           database_name: "myapron-db",
           database_id: databaseId,
-          migrations_dir: "drizzle",
+          migrations_dir: "../drizzle",
         },
       ],
     },
