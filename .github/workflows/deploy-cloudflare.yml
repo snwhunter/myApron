@@ -95,5 +95,5 @@ jobs:
         shell: bash
         run: |
           url="${{ steps.deploy.outputs.url }}"
-          curl --fail --silent --show-error --retry 5 --retry-delay 3 "$url/" >/dev/null
+          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 3 "$url/" >/dev/null
           echo "myApron is live at $url"
