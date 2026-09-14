@@ -83,7 +83,7 @@ jobs:
         run: npm run build
 
       - name: Apply test D1 migrations
-        run: npx wrangler d1 migrations apply DB --remote --config wrangler.jsonc
+        run: npx wrangler d1 migrations apply DB --remote --config .wrangler/household-test-migrations.json
 
       - name: Deploy test Worker
         id: deploy
