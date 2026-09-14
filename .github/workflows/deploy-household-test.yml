@@ -3,6 +3,8 @@ name: Deploy myApron household test
 on:
   push:
     branches: [test/household-preview]
+    paths-ignore:
+      - deployment/household-test-url.txt
   workflow_dispatch:
 
 concurrency:
@@ -10,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   deploy:
@@ -106,3 +108,16 @@ jobs:
           url="${{ steps.deploy.outputs.url }}"
           curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 3 "$url/household" >/dev/null
           echo "myApron household test is live at $url/household"
+
+      - name: Record household test URL
+        shell: bash
+        run: |
+          mkdir -p deployment
+          printf '%s/household\n' "${{ steps.deploy.outputs.url }}" > deployment/household-test-url.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deployment/household-test-url.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "Record household test URL [skip ci]"
+            git push
+          fi
