@@ -1,10 +1,8 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 const databaseId = process.argv[2];
 const databaseName =
   process.env.MYAPRON_D1_DATABASE_NAME || "myapron-household-test-db";
-const bucketName =
-  process.env.MYAPRON_R2_BUCKET_NAME || "myapron-household-test-images";
 
 if (!databaseId) {
   throw new Error(
@@ -16,22 +14,30 @@ const baseConfigPath = new URL(
   "../deploy/wrangler.household-test.json",
   import.meta.url,
 );
-const outputConfigPath = new URL("../wrangler.jsonc", import.meta.url);
-const config = JSON.parse(readFileSync(baseConfigPath, "utf8"));
+const deployConfigPath = new URL("../wrangler.jsonc", import.meta.url);
+const migrationDirectory = new URL("../.wrangler/", import.meta.url);
+const migrationConfigPath = new URL(
+  "../.wrangler/household-test-migrations.json",
+  import.meta.url,
+);
+const deployConfig = JSON.parse(readFileSync(baseConfigPath, "utf8"));
 
-config.d1_databases = [
-  {
-    binding: "DB",
-    database_name: databaseName,
-    database_id: databaseId,
-    migrations_dir: "drizzle",
-  },
-];
-config.r2_buckets = [
-  {
-    binding: "BUCKET",
-    bucket_name: bucketName,
-  },
-];
+writeFileSync(deployConfigPath, `${JSON.stringify(deployConfig, null, 2)}\n`);
 
-writeFileSync(outputConfigPath, `${JSON.stringify(config, null, 2)}\n`);
+const migrationConfig = {
+  ...deployConfig,
+  d1_databases: [
+    {
+      binding: "DB",
+      database_name: databaseName,
+      database_id: databaseId,
+      migrations_dir: "drizzle",
+    },
+  ],
+};
+
+mkdirSync(migrationDirectory, { recursive: true });
+writeFileSync(
+  migrationConfigPath,
+  `${JSON.stringify(migrationConfig, null, 2)}\n`,
+);
