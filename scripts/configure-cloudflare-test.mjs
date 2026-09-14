@@ -31,7 +31,7 @@ const migrationConfig = {
       binding: "DB",
       database_name: databaseName,
       database_id: databaseId,
-      migrations_dir: "drizzle",
+      migrations_dir: "../drizzle",
     },
   ],
 };
